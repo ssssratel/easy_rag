@@ -81,6 +81,21 @@ def verify_token_with_java(token):
     return verified_userid
 
 
+def authorize_bearer(authorization, userid):
+    """Return an HTTP status for a Bearer token scoped to the requested user."""
+    if not isinstance(authorization, str):
+        return 401
+    scheme, separator, token = authorization.partition(" ")
+    token = token.strip()
+    if scheme.lower() != "bearer" or not separator or not token or len(token) > MAX_TOKEN_LENGTH:
+        return 401
+    try:
+        verified_userid = verify_token_with_java(token)
+    except AuthUnavailable:
+        return 503
+    return 200 if verified_userid == userid else 403
+
+
 def login(body):
     """Return (HTTP status, JSON payload) without exposing the token."""
     if len(body) > MAX_LOGIN_BODY_BYTES:

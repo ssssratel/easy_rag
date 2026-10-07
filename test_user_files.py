@@ -1,62 +1,92 @@
-"""按用户存储文件的路径与写入测试。"""
+"""按用户与集合编号存储文件的路径与写入测试。"""
 
 import io
 import tempfile
 import unittest
 from pathlib import Path
 
-from user_files import iter_user_documents, save_upload
+from user_files import (
+    iter_user_documents, save_upload, validate_collection_name,
+    disable_collection, enable_collection, is_collection_disabled,
+)
 
 
 class UserFileTests(unittest.TestCase):
-    """覆盖用户目录隔离与上传文件校验。"""
-
     def setUp(self):
-        """为每个测试创建独立的临时知识库。"""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def test_same_filename_is_separate_for_each_user(self):
-        """同名文件按用户分别保存。"""
-        alice = save_upload("alice", "notes.md", io.BytesIO(b"alice"), 5, self.root)
-        bob = save_upload("bob", "notes.md", io.BytesIO(b"bob"), 3, self.root)
-        self.assertEqual(alice.read_bytes(), b"alice")
-        self.assertEqual(bob.read_bytes(), b"bob")
+    def test_same_filename_is_separate_for_users_and_collections(self):
+        alice_one = save_upload("alice", "one", "notes.md", io.BytesIO(b"one"), 3, self.root)
+        alice_two = save_upload("alice", "two", "notes.md", io.BytesIO(b"two"), 3, self.root)
+        bob_one = save_upload("bob", "one", "notes.md", io.BytesIO(b"bob"), 3, self.root)
+        self.assertEqual(alice_one.read_bytes(), b"one")
+        self.assertEqual(alice_two.read_bytes(), b"two")
+        self.assertEqual(bob_one.read_bytes(), b"bob")
         self.assertEqual(
-            [(doc_id, userid) for doc_id, userid, _ in iter_user_documents(self.root)],
-            [("alice/notes.md", "alice"), ("bob/notes.md", "bob")],
+            [(doc_id, userid, collection_name)
+             for doc_id, userid, collection_name, _ in iter_user_documents(self.root)],
+            [("alice/one/notes.md", "alice", "one"),
+             ("alice/two/notes.md", "alice", "two"),
+             ("bob/one/notes.md", "bob", "one")],
         )
 
     def test_rejects_path_traversal_and_unsupported_files(self):
-        """拒绝路径穿越与不支持的文件类型。"""
-        for userid, filename in [
-            ("../bob", "notes.md"),
-            ("alice", "../notes.md"),
-            ("alice", "notes.py"),
-            ("alice", "..\\notes.md"),
+        for userid, collection_name, filename in [
+            ("../bob", "one", "notes.md"),
+            ("alice", "../bob", "notes.md"),
+            ("alice", "one", "../notes.md"),
+            ("alice", "one", "notes.py"),
+            ("alice", "one", "..\\notes.md"),
         ]:
-            with self.subTest(userid=userid, filename=filename):
+            with self.subTest(userid=userid, collection_name=collection_name, filename=filename):
                 with self.assertRaises(ValueError):
-                    save_upload(userid, filename, io.BytesIO(b"x"), 1, self.root)
+                    save_upload(userid, collection_name, filename, io.BytesIO(b"x"), 1, self.root)
 
     def test_incomplete_upload_does_not_replace_existing_file(self):
-        """上传中断时保留原文件。"""
-        target = save_upload("alice", "notes.md", io.BytesIO(b"old"), 3, self.root)
+        target = save_upload("alice", "one", "notes.md", io.BytesIO(b"old"), 3, self.root)
         with self.assertRaises(ValueError):
-            save_upload("alice", "notes.md", io.BytesIO(b"x"), 3, self.root)
+            save_upload("alice", "one", "notes.md", io.BytesIO(b"x"), 3, self.root)
         self.assertEqual(target.read_bytes(), b"old")
 
-    def test_scan_ignores_files_outside_user_folder(self):
-        """构建扫描只接收用户目录下的直接文件。"""
-        (self.root / "legacy.md").write_text("old", encoding="utf-8")
+    def test_legacy_user_files_use_default_collection(self):
+        (self.root / "outside.md").write_text("ignored", encoding="utf-8")
         (self.root / "alice").mkdir()
-        (self.root / "alice" / "allowed.md").write_text("new", encoding="utf-8")
-        (self.root / "alice" / "nested").mkdir()
-        (self.root / "alice" / "nested" / "ignored.md").write_text("nested", encoding="utf-8")
+        (self.root / "alice" / "old.md").write_text("old", encoding="utf-8")
+        (self.root / "alice" / "one").mkdir()
+        (self.root / "alice" / "one" / "new.md").write_text("new", encoding="utf-8")
         self.assertEqual(
-            [doc_id for doc_id, _, _ in iter_user_documents(self.root)],
-            ["alice/allowed.md"],
+            [doc_id for doc_id, _, _, _ in iter_user_documents(self.root)],
+            ["alice/default/old.md", "alice/one/new.md"],
+        )
+
+    def test_legacy_default_filename_collision_is_rejected(self):
+        (self.root / "alice").mkdir()
+        (self.root / "alice" / "notes.md").write_text("old", encoding="utf-8")
+        (self.root / "alice" / "default").mkdir()
+        (self.root / "alice" / "default" / "notes.md").write_text("new", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            list(iter_user_documents(self.root))
+
+    def test_ascii_name_and_disabled_collection(self):
+        name = "English_123"
+        self.assertEqual(validate_collection_name(name), name)
+        for invalid in ("", "中文", "café", "１23", "a-b", "a.b", "a/b", "a" * 65):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_collection_name(invalid)
+
+        save_upload("alice", name, "notes.md", io.BytesIO(b"one"), 3, self.root)
+        disable_collection("alice", name, self.root)
+        self.assertTrue(is_collection_disabled("alice", name, self.root))
+        self.assertEqual(list(iter_user_documents(self.root)), [])
+        with self.assertRaises(ValueError):
+            save_upload("alice", name, "other.md", io.BytesIO(b"x"), 1, self.root)
+        enable_collection("alice", name, self.root)
+        self.assertFalse(is_collection_disabled("alice", name, self.root))
+        self.assertEqual(
+            [doc_id for doc_id, _, _, _ in iter_user_documents(self.root)],
+            ["alice/{}/notes.md".format(name)],
         )
 
 

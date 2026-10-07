@@ -59,6 +59,16 @@ class LoginApiTests(unittest.TestCase):
             status, _ = auth_api.login(b'{"userid":"alice","token":"opaque-token"}')
         self.assertEqual(status, 503)
 
+    def test_collection_bearer_authorizes_only_matching_user(self):
+        with patch.object(auth_api, "verify_token_with_java", return_value="alice"):
+            self.assertEqual(auth_api.authorize_bearer("Bearer valid", "alice"), 200)
+            self.assertEqual(auth_api.authorize_bearer("Bearer valid", "bob"), 403)
+        self.assertEqual(auth_api.authorize_bearer(None, "alice"), 401)
+        self.assertEqual(auth_api.authorize_bearer("Bearer ", "alice"), 401)
+        with patch.object(auth_api, "verify_token_with_java",
+                          side_effect=auth_api.AuthUnavailable()):
+            self.assertEqual(auth_api.authorize_bearer("Bearer valid", "alice"), 503)
+
 
 if __name__ == "__main__":
     unittest.main()

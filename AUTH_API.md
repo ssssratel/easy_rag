@@ -24,4 +24,4 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
   -d '{"userid":"alice","token":"YOUR_TOKEN"}'
 ```
 
-部署时应使用受信任的 HTTPS 校验地址。当前 `/ask` 与 `/ask_stream` 未接入此认证接口，仍按原有方式提供服务。
+部署时应使用受信任的 HTTPS 校验地址。逻辑集合的创建和删除接口要求 Bearer token，并逐次通过此 Java 服务核对用户身份。当前 `/ask`、`/ask_stream` 和文件上传接口尚未接入认证，仍按原有方式提供服务。

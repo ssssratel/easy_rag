@@ -1,7 +1,0 @@
-# Conda 开发环境定义。
-name: normal
-channels:
-  - defaults
-dependencies:
-  - python=3.8
-  - fastapi

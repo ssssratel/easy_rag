@@ -10,19 +10,17 @@ import re
 import sys
 from urllib.parse import unquote, urlsplit
 from sentence_transformers import SentenceTransformer
-from pymilvus import MilvusClient
+from vector_store import get_vector_store
 from deepseek_api import chat_by_deepseek, chat_by_deepseek_stream
-from rag_builder import COLLECTION_NAME, EMBEDDING_MODEL
-from auth_api import MAX_LOGIN_BODY_BYTES, login
-from user_files import MAX_UPLOAD_BYTES, save_upload, validate_userid
-
-# ========== 配置 ==========
-MILVUS_HOST = "localhost"
-MILVUS_PORT = "19530"
+from rag_builder import EMBEDDING_MODEL, forget_collection_index
+from auth_api import MAX_LOGIN_BODY_BYTES, login, authorize_bearer
+from user_files import (
+    MAX_UPLOAD_BYTES, save_upload, validate_userid, validate_collection_name,
+    collection_directory, is_collection_disabled, disable_collection, enable_collection,
+)
 
 # ========== 全局缓存 ==========
 _model = None
-_client = None
 
 
 def get_model():
@@ -34,42 +32,20 @@ def get_model():
     return _model
 
 
-def get_client():
-    """按需建立并缓存 Milvus 客户端。"""
-    global _client
-    if _client is None:
-        _client = MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
-    return _client
-
-
 # ========== 检索问答 ==========
-def ask(question, userid, top_k=3):
-    """检索知识库并调用 LLM 回答"""
+def retrieve(question, userid, collection_name, top_k):
+    """Embed a question and return records from the configured vector store."""
     userid = validate_userid(userid)
-    client = get_client()
-    model = get_model()
+    collection_name = validate_collection_name(collection_name)
+    if is_collection_disabled(userid, collection_name):
+        raise ValueError("集合已删除，请先重新创建")
+    vector = get_model().encode([question], normalize_embeddings=True)[0].tolist()
+    return get_vector_store().search(userid, collection_name, vector, top_k)
 
-    query_embedding = model.encode([question], normalize_embeddings=True)
 
-    results = client.search(
-        collection_name=COLLECTION_NAME,
-        data=query_embedding.tolist(),
-        filter='userid == "{}"'.format(userid),
-        limit=top_k,
-        output_fields=["content", "filename", "page"],
-        search_params={"metric_type": "IP", "params": {"nprobe": 10}},
-    )
-
-    retrieved = []
-    for hits in results:
-        for hit in hits:
-            entity = hit.get("entity", {})
-            retrieved.append({
-                "content": entity.get("content", ""),
-                "filename": entity.get("filename", ""),
-                "page": entity.get("page", 0),
-                "score": hit.get("distance", 0),
-            })
+def ask(question, userid, collection_name, top_k=3):
+    """检索知识库并调用 LLM 回答"""
+    retrieved = retrieve(question, userid, collection_name, top_k)
 
     if not retrieved:
         return {"answer": "未找到相关文档。", "sources": []}
@@ -100,17 +76,18 @@ def ask(question, userid, top_k=3):
 
 
 def parse_ask_request(data):
-    """Validate the user scope before any Milvus search."""
+    """Validate the user scope before any vector search."""
     if not isinstance(data, dict):
         raise ValueError("请求体必须是 JSON 对象")
     userid = validate_userid(data.get("userid"))
+    collection_name = validate_collection_name(data.get("collection_name"))
     question = data.get("question")
     if not isinstance(question, str) or not question.strip():
         raise ValueError("question 不能为空")
     top_k = data.get("top_k", 3)
     if type(top_k) is not int or not 1 <= top_k <= 10:
         raise ValueError("top_k 必须是 1 到 10 的整数")
-    return userid, question.strip(), top_k
+    return userid, collection_name, question.strip(), top_k
 
 
 def clean(text):
@@ -129,13 +106,31 @@ def clean(text):
 # ========== 集合信息 ==========
 def show_stats():
     """打印当前 Milvus 集合的条目数量。"""
-    client = get_client()
-    if not client.has_collection(COLLECTION_NAME):
-        print(f"集合 {COLLECTION_NAME} 不存在")
+    store = get_vector_store()
+    if not store.exists():
+        print(f"集合 {store.name} 不存在")
         return
-    stats = client.get_collection_stats(COLLECTION_NAME)
-    print(f"集合名称：{COLLECTION_NAME}")
-    print(f"条目数量：{stats.get('row_count', 'N/A')}")
+    print(f"集合名称：{store.name}")
+    print(f"条目数量：{store.count()}")
+
+
+def create_collection_for_user(userid, collection_name):
+    """Create or reactivate a user's logical collection without changing raw files."""
+    directory = collection_directory(userid, collection_name)
+    existed = directory.is_dir()
+    reactivated = is_collection_disabled(userid, collection_name)
+    if reactivated:
+        # A previous delete may have stopped after writing the disable marker.
+        get_vector_store().delete_scope(userid, collection_name)
+        forget_collection_index(userid, collection_name)
+    enable_collection(userid, collection_name)
+    return not existed or reactivated
+
+
+def delete_collection_for_user(userid, collection_name):
+    """Keep source files but remove this user's vectors and stop automatic reindexing."""
+    disable_collection(userid, collection_name)
+    get_vector_store().delete_scope(userid, collection_name)
 
 
 # ========== Web 服务 ==========
@@ -184,9 +179,9 @@ def serve(port=8080):
                     length = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(length)
                     data = json.loads(body)
-                    userid, question, top_k = parse_ask_request(data)
-                    print(f"收到用户 {userid} 的问题：{question}")
-                    result = ask(question, userid, top_k=top_k)
+                    userid, collection_name, question, top_k = parse_ask_request(data)
+                    print(f"收到用户 {userid} 的集合 {collection_name} 的问题：{question}")
+                    result = ask(question, userid, collection_name, top_k=top_k)
                     self._respond_json(result)
                 except ValueError as e:
                     self._respond_json({"error": str(e)}, 400)
@@ -194,18 +189,71 @@ def serve(port=8080):
                     self._respond_json({"error": str(e)}, 500)
             elif self.path == '/ask_stream':
                 self._handle_ask_stream()
+            elif urlsplit(self.path).path.startswith('/api/v1/users/'):
+                self._handle_create_collection()
             else:
                 self.send_error(404)
 
-        def do_PUT(self):
-            """接收文件并写入 userid 对应目录。"""
-            # PUT /api/v1/users/{userid}/files/{filename}
+        def _collection_target(self):
             parts = urlsplit(self.path).path.split('/')
             if (len(parts) != 7 or parts[1:4] != ['api', 'v1', 'users']
-                    or parts[5] != 'files'):
+                    or parts[5] != 'collections'):
+                self.send_error(404)
+                return None
+            try:
+                userid = validate_userid(unquote(parts[4]))
+                collection_name = validate_collection_name(unquote(parts[6]))
+            except ValueError as exc:
+                self._respond_json({"error": str(exc)}, 400)
+                return None
+            status = authorize_bearer(self.headers.get('Authorization'), userid)
+            if status != 200:
+                message = "认证服务暂不可用" if status == 503 else "无权操作该用户的集合"
+                self._respond_json({"error": message}, status)
+                return None
+            return userid, collection_name
+
+        def _handle_create_collection(self):
+            target = self._collection_target()
+            if target is None:
+                return
+            userid, collection_name = target
+            try:
+                created = create_collection_for_user(userid, collection_name)
+            except Exception:
+                self._respond_json({"error": "创建集合失败；请重试"}, 500)
+                return
+            self._respond_json({
+                "userid": userid, "collection_name": collection_name,
+                "created": created,
+            }, 201 if created else 200)
+
+        def do_DELETE(self):
+            target = self._collection_target()
+            if target is None:
+                return
+            userid, collection_name = target
+            try:
+                delete_collection_for_user(userid, collection_name)
+            except Exception:
+                self._respond_json({"error": "删除向量失败；请重试"}, 500)
+                return
+            self._respond_json({
+                "userid": userid, "collection_name": collection_name,
+                "deleted": True, "files_preserved": True,
+            })
+
+        def do_PUT(self):
+            """接收文件并写入用户的指定集合目录。"""
+            # PUT /api/v1/users/{userid}/collections/{collection_name}/files/{filename}
+            parts = urlsplit(self.path).path.split('/')
+            if (len(parts) != 9 or parts[1:4] != ['api', 'v1', 'users']
+                    or parts[5] != 'collections' or parts[7] != 'files'):
                 self.send_error(404)
                 return
-            userid, filename = unquote(parts[4]), unquote(parts[6])
+            userid = unquote(parts[4])
+            collection_name = unquote(parts[6])
+            filename = unquote(parts[8])
             try:
                 length = int(self.headers.get('Content-Length', ''))
             except ValueError:
@@ -215,7 +263,7 @@ def serve(port=8080):
                 self._respond_json({"error": "文件超过 20 MiB 限制"}, 413)
                 return
             try:
-                target = save_upload(userid, filename, self.rfile, length)
+                target = save_upload(userid, collection_name, filename, self.rfile, length)
             except ValueError as exc:
                 self._respond_json({"error": str(exc)}, 400)
                 return
@@ -224,8 +272,9 @@ def serve(port=8080):
                 return
             self._respond_json({
                 "userid": userid,
+                "collection_name": collection_name,
                 "filename": target.name,
-                "path": "{}/{}".format(userid, target.name),
+                "path": "{}/{}/{}".format(userid, collection_name, target.name),
                 "size": length,
             }, 201)
 
@@ -249,30 +298,11 @@ def serve(port=8080):
                 length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(length)
                 data = json.loads(body)
-                userid, question, top_k = parse_ask_request(data)
-                print(f"收到用户 {userid} 的流式问题：{question}")
+                userid, collection_name, question, top_k = parse_ask_request(data)
+                print(f"收到用户 {userid} 的集合 {collection_name} 的流式问题：{question}")
 
                 # 检索
-                client = get_client()
-                model = get_model()
-                query_embedding = model.encode([question], normalize_embeddings=True)
-                results = client.search(
-                    collection_name=COLLECTION_NAME,
-                    data=query_embedding.tolist(),
-                    filter='userid == "{}"'.format(userid),
-                    limit=top_k,
-                    output_fields=["content", "filename", "page"],
-                    search_params={"metric_type": "IP", "params": {"nprobe": 10}},
-                )
-                retrieved = []
-                for hits in results:
-                    for hit in hits:
-                        entity = hit.get("entity", {})
-                        retrieved.append({
-                            "content": entity.get("content", ""),
-                            "filename": entity.get("filename", ""),
-                            "page": entity.get("page", 0),
-                        })
+                retrieved = retrieve(question, userid, collection_name, top_k)
                 sources = [(r["filename"], r["page"]) for r in retrieved]
 
                 # 拼接 prompt
@@ -345,6 +375,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RAG 检索问答")
     parser.add_argument("question", type=str, nargs="?", default=None, help="要提问的问题")
     parser.add_argument("--userid", type=str, default=None, help="检索的用户 ID")
+    parser.add_argument("--collection-name", type=str, default=None, help="用户下的集合名称")
     parser.add_argument("--top_k", type=int, default=3, help="检索数量（默认 3）")
     parser.add_argument("--serve", action="store_true", help="启动 Web 服务")
     parser.add_argument("--port", type=int, default=8080, help="Web 端口（默认 8080）")
@@ -363,9 +394,9 @@ if __name__ == "__main__":
     if question is None:
         question = input("请输入问题：")
 
-    if not args.userid:
-        parser.error("命令行问答必须提供 --userid")
-    result = ask(question, args.userid, top_k=args.top_k)
+    if not args.userid or not args.collection_name:
+        parser.error("命令行问答必须提供 --userid 和 --collection-name")
+    result = ask(question, args.userid, args.collection_name, top_k=args.top_k)
     print(f"\n答案：{result['answer']}")
     print(f"\n来源：")
     for filename, page in result["sources"]:

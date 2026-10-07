@@ -1,179 +1,327 @@
 <!DOCTYPE html>
-<!-- RAG 问答页面：提交用户范围内的问题并展示回答来源。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RAG 知识问答</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, "Microsoft YaHei", sans-serif;
-         background: #f5f5f5; color: #333; line-height: 1.6; }
-  .container { max-width: 800px; margin: 40px auto; padding: 0 20px; }
-  h1 { text-align: center; margin-bottom: 30px; color: #1a1a1a; }
-  .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
-  .search-box input { flex: 1; padding: 12px 16px; border: 2px solid #ddd;
-    border-radius: 8px; font-size: 16px; outline: none; }
-  .search-box input:focus { border-color: #4a90d9; }
-  .search-box button { padding: 12px 24px; background: #4a90d9; color: #fff;
-    border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
-  .search-box button:hover { background: #357abd; }
-  .search-box button:disabled { background: #999; cursor: not-allowed; }
-  .options { display: flex; align-items: center; gap: 10px; margin-bottom: 20px;
-    font-size: 14px; color: #666; }
-  .options input[type=range] { width: 120px; }
-  #result { display: none; }
-  #answer { background: #fff; padding: 24px; border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 16px;
-    white-space: pre-wrap; word-wrap: break-word; }
-  #sources { background: #fff; padding: 16px 24px; border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-  #sources h3 { font-size: 14px; color: #999; margin-bottom: 8px; }
-  #sources ul { list-style: none; }
-  #sources li { padding: 6px 0; border-bottom: 1px solid #f0f0f0;
-    font-size: 14px; color: #666; }
-  #sources li:last-child { border-bottom: none; }
-  .loading { text-align: center; color: #999; padding: 20px; display: none; }
-  /* Markdown 样式 */
-  #answer h1, #answer h2, #answer h3 { margin: 12px 0 6px; }
-  #answer p { margin: 6px 0; }
-  #answer ul, #answer ol { padding-left: 24px; margin: 6px 0; }
-  #answer code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px;
-    font-family: "Fira Code", "Consolas", monospace; font-size: 14px; }
-  #answer pre { background: #2d2d2d; color: #f8f8f2; padding: 16px;
-    border-radius: 8px; overflow-x: auto; margin: 10px 0; }
-  #answer pre code { background: none; padding: 0; color: inherit; }
-  #answer table { border-collapse: collapse; margin: 10px 0; width: 100%; }
-  #answer th, #answer td { border: 1px solid #ddd; padding: 8px 12px;
-    text-align: left; }
-  #answer th { background: #f5f5f5; }
-  #answer blockquote { border-left: 4px solid #4a90d9; padding: 8px 16px;
-    margin: 10px 0; background: #f8f9fa; color: #666; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #233044; background: #f4f6f9;
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif; }
+  .container { max-width: 980px; margin: 30px auto; padding: 0 18px 40px; }
+  h1 { margin: 0 0 6px; font-size: 28px; } h2 { margin: 0 0 16px; font-size: 19px; }
+  .intro, .hint { color: #627084; } .hint { margin: 8px 0; font-size: 13px; }
+  .panel { margin-top: 20px; padding: 22px; background: #fff; border: 1px solid #e0e5ec; border-radius: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=text], input[type=password], textarea { width: 100%; padding: 10px 12px;
+    border: 1px solid #bcc7d5; border-radius: 7px; font: inherit; background: #fff; }
+  input:focus, textarea:focus { outline: 2px solid #b9d6fd; border-color: #3978cb; }
+  textarea { resize: vertical; min-height: 88px; }
+  button { padding: 9px 16px; border: 1px solid #2c68b6; border-radius: 7px;
+    background: #2c68b6; color: #fff; font: inherit; cursor: pointer; }
+  button.secondary { background: #fff; color: #2c68b6; }
+  button.danger { background: #fff; color: #b52b36; border-color: #b52b36; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .actions, .options { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+  .options label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; }
+  .separator { border-top: 1px solid #e0e5ec; margin: 20px 0; }
+  .status { min-height: 24px; margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .status.error { color: #b52b36; } .status.success { color: #137547; }
+  code, pre { font-family: Consolas, monospace; } pre { padding: 14px; overflow: auto; background: #f3f5f8; border-radius: 7px; }
+  #answer { overflow-wrap: anywhere; }
+  #answer.plain { white-space: pre-wrap; } #answer pre { white-space: pre-wrap; }
+  #answer table { border-collapse: collapse; } #answer td, #answer th { border: 1px solid #ccd5df; padding: 6px; }
+  #sources { padding-left: 20px; color: #627084; }
+  [hidden] { display: none !important; }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } .panel { padding: 16px; } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 </head>
 <body>
-<div class="container">
+<main class="container">
   <h1>RAG 知识问答</h1>
-  <div class="search-box">
-    <input type="text" id="userid" placeholder="输入 userid" autocomplete="username">
-  </div>
-  <div class="search-box">
-    <input type="text" id="question" placeholder="输入你的问题..."
-           autofocus onkeydown="if(event.key==='Enter') ask()">
-    <button id="btn" onclick="ask()">提问</button>
-  </div>
-  <div class="options">
-    <label>检索数量：</label>
-    <input type="range" id="top_k" min="1" max="10" value="3">
-    <span id="top_k_val">3</span>
-    <label style="margin-left:16px">
-      <input type="checkbox" id="stream" checked> 流式输出
-    </label>
-  </div>
-  <div class="loading" id="loading">检索中，请稍候...</div>
-  <div id="result">
-    <div id="answer"></div>
-    <div id="sources"></div>
-  </div>
-</div>
+  <p class="intro">使用示例用户和集合测试登录、上传、集合管理与问答。所有操作都会显示请求结果。</p>
+  <section class="panel" aria-labelledby="scope_title">
+    <h2 id="scope_title">用户与集合</h2>
+    <div class="grid">
+      <div><label for="userid">用户 ID</label>
+        <input type="text" id="userid" value="1" placeholder="例如：1" autocomplete="username" maxlength="128"></div>
+      <div><label for="collection_name">集合名称</label>
+        <input type="text" id="collection_name" value="demo_1" placeholder="例如：demo_1" maxlength="64">
+        <p class="hint">支持英文字母、数字和下划线，最多 64 个字符。</p></div>
+    </div>
+    <label for="token">身份 Token</label>
+    <input type="password" id="token" placeholder="填写身份服务为用户 1 签发的真实 Token" autocomplete="off" maxlength="4096">
+    <p class="hint">示例参数为 userid="1"。Token 需要由身份服务提供，不会保存在浏览器存储中。创建和删除集合需要有效 Token。</p>
+    <div class="actions"><button type="button" id="login_btn" onclick="verifyLogin()">校验登录</button></div>
+    <p id="login_status" class="status" role="status" aria-live="polite">尚未校验登录。</p>
+  </section>
+
+  <section class="panel" aria-labelledby="manage_title">
+    <h2 id="manage_title">集合与文档</h2>
+    <div class="actions">
+      <button type="button" id="create_btn" onclick="manageCollection('POST')">创建 / 重新启用集合</button>
+      <button type="button" id="delete_btn" class="danger" onclick="manageCollection('DELETE')">删除集合向量</button>
+    </div>
+    <p class="hint">删除会停用当前用户的指定集合并保留原文件。重新创建后，可重新入库。</p>
+    <p id="collection_status" class="status" role="status" aria-live="polite"></p>
+    <div class="separator"></div>
+    <label for="upload_file">上传文档</label>
+    <input type="file" id="upload_file" accept=".txt,.md,.html,.htm">
+    <div class="actions">
+      <button type="button" id="upload_btn" onclick="uploadDocument(false)">上传所选文件</button>
+      <button type="button" id="demo_btn" class="secondary" onclick="uploadDocument(true)">上传示例 demo.md</button>
+    </div>
+    <p class="hint">支持 TXT、Markdown、HTML，最大 20 MiB。同名文件会被覆盖。示例文件介绍 RAG 的流程。</p>
+    <p class="hint">上传成功后，在服务端运行 <code>python rag_builder.py</code> 完成入库，再进行问答。</p>
+    <p id="upload_status" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="ask_title">
+    <h2 id="ask_title">知识问答</h2>
+    <label for="question">问题</label>
+    <textarea id="question" placeholder="输入你的问题">RAG 的基本流程是什么？</textarea>
+    <div class="options">
+      <label for="top_k">检索数量：</label>
+      <input type="range" id="top_k" min="1" max="10" value="3">
+      <output id="top_k_val" for="top_k">3</output>
+      <label><input type="checkbox" id="stream" checked> 流式回答</label>
+    </div>
+    <div class="actions">
+      <button type="button" id="ask_btn" onclick="ask()">提问</button>
+      <button type="button" id="cancel_btn" class="secondary" onclick="cancelAsk()" disabled>停止生成</button>
+    </div>
+    <p id="ask_status" class="status" role="status" aria-live="polite"></p>
+    <div id="result" hidden>
+      <div class="separator"></div>
+      <div id="answer" class="plain" aria-live="polite"></div>
+      <h3>参考来源</h3><ul id="sources"></ul>
+    </div>
+  </section>
+
+  <section class="panel">
+    <details><summary>最近一次接口请求（Token 已隐藏）</summary><pre id="request_preview">点击操作后显示接口路径和参数。</pre></details>
+    <p class="hint">请通过问答服务页面使用，例如 http://localhost:8080/。当前后端的问答与上传接口尚未校验身份 Token；登录、创建和删除集合需接入 Java 身份校验服务。</p>
+  </section>
+</main>
 <script>
-var topK = document.getElementById('top_k');
-var topKVal = document.getElementById('top_k_val');
-topK.oninput = function() { topKVal.textContent = this.value; };
+'use strict';
+const byId = id => document.getElementById(id);
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const DEMO_DOCUMENT = '# RAG 示例文档\n\nRAG 是检索增强生成。基本流程是：上传知识文档，将文档分块并生成向量，存入向量数据库。收到问题时，用相同模型生成问题向量，按用户与集合过滤，检索相关文本块，再把资料与问题交给语言模型生成回答。\n';
+let busy = false;
+let askController = null;
+byId('top_k').addEventListener('input', () => { byId('top_k_val').textContent = byId('top_k').value; });
+for (const id of ['userid', 'token']) {
+  byId(id).addEventListener('input', () => setStatus('login_status', '身份参数已更改，请重新校验。'));
+}
+byId('question').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); ask(); }
+});
 
-async function ask() {
-  // 提交普通或流式问答请求，并更新页面结果。
-  var userid = document.getElementById('userid').value.trim();
-  var q = document.getElementById('question').value.trim();
-  if (!userid || !q) return;
-  var btn = document.getElementById('btn');
-  var loading = document.getElementById('loading');
-  var result = document.getElementById('result');
-  var answerEl = document.getElementById('answer');
-  var sourcesEl = document.getElementById('sources');
-  var useStream = document.getElementById('stream').checked;
-
-  btn.disabled = true;
-  loading.style.display = useStream ? 'none' : 'block';
-  result.style.display = useStream ? 'block' : 'none';
-  answerEl.innerHTML = useStream ? '' : '';
-  sourcesEl.innerHTML = '';
-
-  if (!useStream) {
-    try {
-      var resp = await fetch('/ask', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({userid: userid, question: q, top_k: parseInt(topK.value)})
-      });
-      var data = await resp.json();
-      answerEl.innerHTML = marked.parse(data.answer || '(无回答)');
-      renderSources(data.sources);
-      result.style.display = 'block';
-    } catch(e) {
-      answerEl.textContent = '请求失败: ' + e.message;
-      result.style.display = 'block';
-    } finally {
-      btn.disabled = false;
-      loading.style.display = 'none';
+function setStatus(id, message, type = '') {
+  byId(id).textContent = message;
+  byId(id).className = 'status' + (type ? ' ' + type : '');
+}
+function setBusy(value) {
+  busy = value;
+  for (const id of ['userid', 'collection_name', 'token', 'upload_file', 'question', 'top_k', 'stream',
+    'login_btn', 'create_btn', 'delete_btn', 'upload_btn', 'demo_btn', 'ask_btn']) {
+    byId(id).disabled = value;
+  }
+  byId('cancel_btn').disabled = !askController;
+}
+function userId() {
+  const userid = byId('userid').value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/.test(userid)) throw new Error('用户 ID 格式无效。示例：1');
+  return userid;
+}
+function scope() {
+  const userid = userId();
+  const collection_name = byId('collection_name').value.trim();
+  if (!/^[A-Za-z0-9_]{1,64}$/.test(collection_name)) throw new Error('集合名称仅支持英文字母、数字和下划线，最多 64 个字符。');
+  return {userid, collection_name};
+}
+function tokenValue(required = false) {
+  const token = byId('token').value.trim();
+  if (required && !token) throw new Error('请填写该用户的真实身份 Token。');
+  if (token.length > 4096) throw new Error('Token 超过长度限制。');
+  return token;
+}
+function headers(json = false, required = false) {
+  const result = json ? {'Content-Type': 'application/json'} : {};
+  const token = tokenValue(required);
+  if (token) result.Authorization = 'Bearer ' + token;
+  return result;
+}
+function collectionPath(target) {
+  return '/api/v1/users/' + encodeURIComponent(target.userid) + '/collections/' + encodeURIComponent(target.collection_name);
+}
+function showRequest(path, options, bodyPreview) {
+  const safeHeaders = {...(options.headers || {})};
+  if (safeHeaders.Authorization) safeHeaders.Authorization = 'Bearer [已隐藏]';
+  byId('request_preview').textContent = JSON.stringify({
+    method: options.method, path, headers: safeHeaders, body: bodyPreview
+  }, null, 2);
+}
+async function readJSON(response) {
+  const raw = await response.text();
+  let data;
+  try { data = JSON.parse(raw); } catch (_) {
+    throw new Error('HTTP ' + response.status + '：接口未返回 JSON，请确认访问的是问答服务。');
+  }
+  if (!response.ok) throw new Error('HTTP ' + response.status + '：' + (data.error || '请求失败'));
+  return data;
+}
+async function requestJSON(path, options, bodyPreview) {
+  showRequest(path, options, bodyPreview);
+  return readJSON(await fetch(path, options));
+}
+async function runAction(statusId, pending, action) {
+  if (busy) return;
+  setBusy(true);
+  setStatus(statusId, pending);
+  try { await action(); } catch (error) { setStatus(statusId, error.message, 'error'); }
+  finally { setBusy(false); }
+}
+async function verifyLogin() {
+  return runAction('login_status', '正在校验身份…', async () => {
+    const userid = userId();
+    const token = tokenValue(true);
+    const result = await requestJSON('/api/v1/auth/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userid, token})
+    }, {userid, token: '[已隐藏]'});
+    if (result.authenticated !== true || result.userid !== userid) throw new Error('身份服务未返回匹配的用户身份。');
+    setStatus('login_status', '用户 ' + userid + ' 校验成功。后续集合操作会再次校验 Token。', 'success');
+  });
+}
+async function manageCollection(method) {
+  return runAction('collection_status', '正在处理集合…', async () => {
+    const target = scope();
+    const options = {method, headers: headers(false, true)};
+    if (method === 'DELETE' && !window.confirm('删除用户 ' + target.userid + ' 的集合 ' +
+      target.collection_name + ' 中的所有向量？原文件将保留，集合将停用。')) {
+      setStatus('collection_status', '已取消删除。'); return;
     }
+    const result = await requestJSON(collectionPath(target), options);
+    if (method === 'DELETE') {
+      if (result.deleted !== true) throw new Error('接口未确认删除成功。');
+      setStatus('collection_status', '集合向量已删除，集合已停用；原文件保留。', 'success');
+    } else {
+      setStatus('collection_status', result.created ? '集合已创建或重新启用。' : '集合已存在且处于启用状态。', 'success');
+    }
+  });
+}
+async function uploadDocument(example) {
+  return runAction('upload_status', '正在上传文档…', async () => {
+    const target = scope();
+    const file = example ? new File([DEMO_DOCUMENT], 'demo.md', {type: 'text/markdown'}) : byId('upload_file').files[0];
+    if (!file) throw new Error('请先选择文件，或点击上传示例 demo.md。');
+    if (!/\.(txt|md|html|htm)$/i.test(file.name)) throw new Error('只支持 TXT、Markdown、HTML 文件。');
+    if (/[/\\\u0000<>:"|?*\u0001-\u001f]/.test(file.name) || file.name.startsWith('.') ||
+      /[. ]$/.test(file.name) || new TextEncoder().encode(file.name).length > 240) throw new Error('文件名无效。');
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error('文件超过 20 MiB 限制。');
+    const path = collectionPath(target) + '/files/' + encodeURIComponent(file.name);
+    // 使用文件原始字节，浏览器负责 Content-Length；后端不接受 multipart/form-data。
+    const options = {method: 'PUT', headers: {...headers(), 'Content-Type': 'application/octet-stream'}, body: file};
+    const result = await requestJSON(path, options, {filename: file.name, size: file.size, format: '文件原始字节'});
+    setStatus('upload_status', '已上传 ' + result.path + '（' + result.size + ' 字节）。请在服务端完成入库后再提问。', 'success');
+  });
+}
+function renderAnswer(text) {
+  const element = byId('answer');
+  if (window.marked && window.DOMPurify) {
+    element.className = '';
+    element.innerHTML = DOMPurify.sanitize(marked.parse(text));
   } else {
-    try {
-      var resp = await fetch('/ask_stream', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({userid: userid, question: q, top_k: parseInt(topK.value)})
-      });
-      var reader = resp.body.getReader();
-      var decoder = new TextDecoder();
-      var buffer = '';
-      var fullText = '';
-
-      while (true) {
-        var chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, {stream: true});
-        var parts = buffer.split('\n\n');
-        buffer = parts.pop();
-        for (var i = 0; i < parts.length; i++) {
-          var line = parts[i].trim();
-          if (!line || !line.startsWith('data: ')) continue;
-          try {
-            var msg = JSON.parse(line.substring(6));
-            if (msg.token) {
-              fullText += msg.token;
-              answerEl.innerHTML = marked.parse(fullText);
-            } else if (msg.done) {
-              renderSources(msg.sources);
-            } else if (msg.error) {
-              answerEl.innerHTML = marked.parse(fullText + '\n\n> ⚠️ ' + msg.error);
-            }
-          } catch(e) {}
-        }
-      }
-    } catch(e) {
-      answerEl.innerHTML = marked.parse(fullText + '\n\n> ⚠️ 请求失败: ' + e.message);
-    } finally {
-      btn.disabled = false;
-      loading.style.display = 'none';
-    }
+    element.className = 'plain';
+    element.textContent = text;
   }
 }
-
 function renderSources(sources) {
-  // 将返回的文档来源显示在回答下方。
-  var html = '<h3>参考来源</h3><ul>';
-  if (sources && sources.length) {
-    sources.forEach(function(s) {
-      html += '<li>' + s[0] + ' (第' + s[1] + '页)</li>';
-    });
-  } else {
-    html += '<li>无参考来源</li>';
+  const list = byId('sources');
+  list.replaceChildren();
+  for (const item of (Array.isArray(sources) && sources.length ? sources : [['无参考来源']])) {
+    const li = document.createElement('li');
+    li.textContent = String(item[0]) + (item.length > 1 ? '（第 ' + item[1] + ' 块）' : '');
+    list.appendChild(li);
   }
-  html += '</ul>';
-  document.getElementById('sources').innerHTML = html;
 }
+async function readAnswerStream(response, onToken) {
+  if (!response.ok) { await readJSON(response); return; }
+  if (!(response.headers.get('Content-Type') || '').includes('text/event-stream') || !response.body) {
+    throw new Error('接口未返回 SSE 流式数据。');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let done = false;
+  function consume(frame) {
+    const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart()).join('\n');
+    if (!data) return;
+    const message = JSON.parse(data);
+    if (message.error) throw new Error(message.error);
+    if (typeof message.token === 'string') onToken(message.token);
+    if (message.done) { done = true; renderSources(message.sources); }
+  }
+  try {
+    while (!done) {
+      const chunk = await reader.read();
+      buffer += chunk.done ? decoder.decode() : decoder.decode(chunk.value, {stream: true});
+      let separator;
+      while ((separator = /\r?\n\r?\n/.exec(buffer)) !== null) {
+        consume(buffer.slice(0, separator.index));
+        buffer = buffer.slice(separator.index + separator[0].length);
+      }
+      if (chunk.done) { if (buffer.trim()) consume(buffer); break; }
+    }
+    if (!done) throw new Error('连接已结束，但未收到回答完成标记，请重试。');
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+async function ask() {
+  if (busy) return;
+  let fullText = '';
+  askController = new AbortController();
+  setBusy(true);
+  setStatus('ask_status', '正在检索并生成回答…');
+  byId('result').hidden = false;
+  renderAnswer('');
+  renderSources([]);
+  try {
+    const target = scope();
+    const question = byId('question').value.trim();
+    const top_k = Number(byId('top_k').value);
+    if (!question) throw new Error('请输入问题。');
+    if (!Number.isInteger(top_k) || top_k < 1 || top_k > 10) throw new Error('检索数量须为 1 到 10。');
+    const payload = {...target, question, top_k};
+    const stream = byId('stream').checked;
+    const path = stream ? '/ask_stream' : '/ask';
+    const options = {method: 'POST', headers: headers(true), body: JSON.stringify(payload), signal: askController.signal};
+    showRequest(path, options, payload);
+    const response = await fetch(path, options);
+    if (stream) {
+      await readAnswerStream(response, token => { fullText += token; renderAnswer(fullText); });
+    } else {
+      const result = await readJSON(response);
+      renderAnswer(result.answer || '未返回回答。');
+      renderSources(result.sources);
+    }
+    setStatus('ask_status', '回答完成。', 'success');
+  } catch (error) {
+    setStatus('ask_status', error.name === 'AbortError' ? '已停止生成。' : '请求失败：' + error.message,
+      error.name === 'AbortError' ? '' : 'error');
+  } finally {
+    askController = null;
+    setBusy(false);
+  }
+}
+function cancelAsk() { if (askController) askController.abort(); }
 </script>
 </body>
 </html>

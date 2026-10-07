@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RAG 知识库构建脚本
-从 KNOWLEDGE_DIR/<userid>/ 读取文档，自动分块后向量化存入 Milvus。
+从 KNOWLEDGE_DIR/<userid>/<collection_name>/ 读取文档并向量化入库。
 默认增量构建（只处理变化的文件），--rebuild 全量重建。
 """
 import os
@@ -9,16 +9,12 @@ import sys
 import json
 import hashlib
 from sentence_transformers import SentenceTransformer
-from pymilvus import MilvusClient
+from vector_store import get_vector_store
 from chunk_docs import read_document, split_by_paragraph
-from user_files import knowledge_root, iter_user_documents
+from user_files import knowledge_root, iter_user_documents, validate_userid, validate_collection_name
 
 # ========== 配置 ==========
-MILVUS_HOST = "localhost"
-MILVUS_PORT = "19530"
-COLLECTION_NAME = "knowledgebase_DST"
 KNOWLEDGE_DIR = str(knowledge_root())
-# COLLECTION_NAME = "my_knowledge_base"
 # KNOWLEDGE_DIR = "/home/ratel/projects/knowledge_base"
 
 EMBEDDING_MODEL = "/home/ratel/models/bge-m3"
@@ -26,6 +22,7 @@ INDEX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "milvus_docs", "chunk_index.json")
 CHUNKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "milvus_docs", "chunks.json")
+INDEX_SCHEMA = "collection_name_v1"
 
 
 # ========== 索引管理 ==========
@@ -44,16 +41,22 @@ def save_index(index):
         json.dump(index, f, ensure_ascii=False, indent=2)
 
 
+def forget_collection_index(userid, collection_name):
+    """Make retained files eligible for indexing after a deleted collection is restored."""
+    userid = validate_userid(userid)
+    collection_name = validate_collection_name(collection_name)
+    prefix = "{}/{}/".format(userid, collection_name)
+    index = load_index()
+    retained = {doc_id: item for doc_id, item in index.items()
+                if not doc_id.startswith(prefix)}
+    if len(retained) != len(index):
+        save_index(retained)
+
+
 def file_sha256(filepath):
     """计算文件 SHA256"""
     with open(filepath, 'rb') as f:
         return hashlib.sha256(f.read()).hexdigest()
-
-
-# ========== Milvus 客户端 ==========
-def get_client():
-    """建立到 Milvus 的客户端连接。"""
-    return MilvusClient(uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}")
 
 
 # ========== 构建知识库 ==========
@@ -64,8 +67,11 @@ def build(chunks, rebuild=False):
         print("❌ 没有可处理的文档，退出")
         return
 
-    if any(not c.get("userid") or not c.get("doc_id") for c in chunks):
-        raise ValueError("每个 chunk 必须包含 userid 和 doc_id；旧格式数据需重新分块")
+    if any(not c.get("doc_id") or "collection_name" not in c for c in chunks):
+        raise ValueError("每个 chunk 必须包含 userid、collection_name 和 doc_id；旧格式数据需重新分块")
+    for chunk in chunks:
+        validate_userid(chunk.get("userid"))
+        validate_collection_name(chunk["collection_name"])
 
     # 1. 向量化
     print("🔄 生成向量中...")
@@ -75,22 +81,11 @@ def build(chunks, rebuild=False):
     dim = embeddings.shape[1]
     print(f"✅ 生成 {len(embeddings)} 个 {dim} 维向量")
 
-    client = get_client()
+    store = get_vector_store()
 
-    # 2. 重建集合
-    if rebuild and client.has_collection(COLLECTION_NAME):
-        client.drop_collection(COLLECTION_NAME)
-        print("🗑️  已清空旧集合")
-
-    if not client.has_collection(COLLECTION_NAME):
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            dimension=dim,
-            metric_type="IP",
-            auto_id=True,
-            enable_dynamic_field=True,
-        )
-        print(f"📦 创建集合 {COLLECTION_NAME}")
+    # 2. 准备向量索引
+    if store.prepare(dim, rebuild=rebuild):
+        print(f"📦 创建集合 {store.name}")
 
     # 3. 插入数据
     data = []
@@ -102,10 +97,11 @@ def build(chunks, rebuild=False):
             "filename": c.get("filename", ""),
             "page": c.get("page", 0),
             "userid": c["userid"],
+            "collection_name": c["collection_name"],
             "doc_id": c["doc_id"],
         })
-    client.insert(collection_name=COLLECTION_NAME, data=data)
-    client.flush(collection_name=COLLECTION_NAME)
+    store.add(data)
+    store.commit()
 
     # 保存 chunks 到 JSON 文件
     os.makedirs(os.path.dirname(CHUNKS_FILE), exist_ok=True)
@@ -128,21 +124,25 @@ def incremental_build():
 
     # 1. 加载历史索引
     old_index = load_index()
-    if any("/" not in doc_id for doc_id in old_index):
-        raise RuntimeError("检测到旧版文件索引；请先按 userid 迁移文件，再运行 --rebuild")
+    if any(len(doc_id.split("/")) != 3 for doc_id in old_index):
+        raise RuntimeError("检测到缺少集合名称的旧索引；请备份数据后运行 --rebuild")
+    if any(not isinstance(info, dict) or info.get("schema") != INDEX_SCHEMA
+           for info in old_index.values()):
+        raise RuntimeError("检测到旧 collection_id 索引；请备份数据后运行 --rebuild")
 
     # 2. 扫描当前文件
     doc_files = list(iter_user_documents())
     if not doc_files and not old_index:
-        print(f"⚠️  在 {KNOWLEDGE_DIR}/<userid>/ 中未找到支持的文档文件")
+        print(f"⚠️  在 {KNOWLEDGE_DIR}/<userid>/<collection_name>/ 中未找到支持的文档文件")
         return
 
     current_files = {}
-    for doc_id, userid, fp in doc_files:
+    for doc_id, userid, collection_name, fp in doc_files:
         current_files[doc_id] = {
             "path": str(fp),
             "sha256": file_sha256(fp),
             "userid": userid,
+            "collection_name": collection_name,
             "filename": fp.name,
             "doc_id": doc_id,
         }
@@ -188,8 +188,8 @@ def incremental_build():
     print()
 
     # 5. 确保集合存在
-    client = get_client()
-    if not client.has_collection(COLLECTION_NAME):
+    store = get_vector_store()
+    if not store.exists():
         # 首次运行，走全量
         print("📦 首次运行，进行全量构建")
         chunks = _chunk_files(list(current_files.values()))
@@ -201,23 +201,23 @@ def incremental_build():
 
     # 6. 删除已移除文件的条目
     for doc_id in removed_files:
-        _delete_by_doc_id(client, doc_id)
+        store.delete_document(doc_id)
         print(f"  🗑️  已删除：{doc_id}")
 
     # 7. 处理修改过的文件（先删旧再插新）
     for doc_id in changed_files:
-        _delete_by_doc_id(client, doc_id)
+        store.delete_document(doc_id)
         info = current_files[doc_id]
-        _insert_file(client, model, info)
+        _insert_file(store, model, info)
         print(f"  ✏️  已更新：{doc_id}")
 
     # 8. 处理新文件
     for doc_id in new_files:
         info = current_files[doc_id]
-        _insert_file(client, model, info)
+        _insert_file(store, model, info)
         print(f"  ➕ 已新增：{doc_id}")
 
-    client.flush(collection_name=COLLECTION_NAME)
+    store.commit()
 
     # 9. 更新索引
     _update_index(current_files)
@@ -240,20 +240,13 @@ def _chunk_files(file_infos):
                 "filename": info["filename"],
                 "page": i + 1,
                 "userid": info["userid"],
+                "collection_name": info["collection_name"],
                 "doc_id": info["doc_id"],
             })
     return all_chunks
 
 
-def _delete_by_doc_id(client, doc_id):
-    """从集合中删除指定用户文档的所有条目；失败时不更新本地索引。"""
-    client.delete(
-        collection_name=COLLECTION_NAME,
-        filter='doc_id == {}'.format(json.dumps(doc_id, ensure_ascii=False)),
-    )
-
-
-def _insert_file(client, model, info):
+def _insert_file(store, model, info):
     """分块并插入单个文件"""
     text = read_document(info["path"])
     if not text.strip():
@@ -271,14 +264,16 @@ def _insert_file(client, model, info):
             "filename": info["filename"],
             "page": i + 1,
             "userid": info["userid"],
+            "collection_name": info["collection_name"],
             "doc_id": info["doc_id"],
         })
-    client.insert(collection_name=COLLECTION_NAME, data=data)
+    store.add(data)
 
 
 def _update_index(current_files):
     """保存当前文件索引（去除 path 字段）"""
-    clean = {fname: {"sha256": info["sha256"]} for fname, info in current_files.items()}
+    clean = {fname: {"sha256": info["sha256"], "schema": INDEX_SCHEMA}
+             for fname, info in current_files.items()}
     save_index(clean)
 
 
@@ -319,9 +314,10 @@ if __name__ == "__main__":
         current_files = {
             doc_id: {
                 "path": str(path), "sha256": file_sha256(path),
-                "userid": userid, "filename": path.name, "doc_id": doc_id,
+                "userid": userid, "collection_name": collection_name,
+                "filename": path.name, "doc_id": doc_id,
             }
-            for doc_id, userid, path in iter_user_documents()
+            for doc_id, userid, collection_name, path in iter_user_documents()
         }
         chunks = _chunk_files(list(current_files.values()))
         build(chunks, rebuild=True)
