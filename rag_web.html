@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<!-- RAG 问答页面：提交用户范围内的问题并展示回答来源。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG 知识问答</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif;
+         background: #f5f5f5; color: #333; line-height: 1.6; }
+  .container { max-width: 800px; margin: 40px auto; padding: 0 20px; }
+  h1 { text-align: center; margin-bottom: 30px; color: #1a1a1a; }
+  .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+  .search-box input { flex: 1; padding: 12px 16px; border: 2px solid #ddd;
+    border-radius: 8px; font-size: 16px; outline: none; }
+  .search-box input:focus { border-color: #4a90d9; }
+  .search-box button { padding: 12px 24px; background: #4a90d9; color: #fff;
+    border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
+  .search-box button:hover { background: #357abd; }
+  .search-box button:disabled { background: #999; cursor: not-allowed; }
+  .options { display: flex; align-items: center; gap: 10px; margin-bottom: 20px;
+    font-size: 14px; color: #666; }
+  .options input[type=range] { width: 120px; }
+  #result { display: none; }
+  #answer { background: #fff; padding: 24px; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 16px;
+    white-space: pre-wrap; word-wrap: break-word; }
+  #sources { background: #fff; padding: 16px 24px; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+  #sources h3 { font-size: 14px; color: #999; margin-bottom: 8px; }
+  #sources ul { list-style: none; }
+  #sources li { padding: 6px 0; border-bottom: 1px solid #f0f0f0;
+    font-size: 14px; color: #666; }
+  #sources li:last-child { border-bottom: none; }
+  .loading { text-align: center; color: #999; padding: 20px; display: none; }
+  /* Markdown 样式 */
+  #answer h1, #answer h2, #answer h3 { margin: 12px 0 6px; }
+  #answer p { margin: 6px 0; }
+  #answer ul, #answer ol { padding-left: 24px; margin: 6px 0; }
+  #answer code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px;
+    font-family: "Fira Code", "Consolas", monospace; font-size: 14px; }
+  #answer pre { background: #2d2d2d; color: #f8f8f2; padding: 16px;
+    border-radius: 8px; overflow-x: auto; margin: 10px 0; }
+  #answer pre code { background: none; padding: 0; color: inherit; }
+  #answer table { border-collapse: collapse; margin: 10px 0; width: 100%; }
+  #answer th, #answer td { border: 1px solid #ddd; padding: 8px 12px;
+    text-align: left; }
+  #answer th { background: #f5f5f5; }
+  #answer blockquote { border-left: 4px solid #4a90d9; padding: 8px 16px;
+    margin: 10px 0; background: #f8f9fa; color: #666; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+<div class="container">
+  <h1>RAG 知识问答</h1>
+  <div class="search-box">
+    <input type="text" id="userid" placeholder="输入 userid" autocomplete="username">
+  </div>
+  <div class="search-box">
+    <input type="text" id="question" placeholder="输入你的问题..."
+           autofocus onkeydown="if(event.key==='Enter') ask()">
+    <button id="btn" onclick="ask()">提问</button>
+  </div>
+  <div class="options">
+    <label>检索数量：</label>
+    <input type="range" id="top_k" min="1" max="10" value="3">
+    <span id="top_k_val">3</span>
+    <label style="margin-left:16px">
+      <input type="checkbox" id="stream" checked> 流式输出
+    </label>
+  </div>
+  <div class="loading" id="loading">检索中，请稍候...</div>
+  <div id="result">
+    <div id="answer"></div>
+    <div id="sources"></div>
+  </div>
+</div>
+<script>
+var topK = document.getElementById('top_k');
+var topKVal = document.getElementById('top_k_val');
+topK.oninput = function() { topKVal.textContent = this.value; };
+
+async function ask() {
+  // 提交普通或流式问答请求，并更新页面结果。
+  var userid = document.getElementById('userid').value.trim();
+  var q = document.getElementById('question').value.trim();
+  if (!userid || !q) return;
+  var btn = document.getElementById('btn');
+  var loading = document.getElementById('loading');
+  var result = document.getElementById('result');
+  var answerEl = document.getElementById('answer');
+  var sourcesEl = document.getElementById('sources');
+  var useStream = document.getElementById('stream').checked;
+
+  btn.disabled = true;
+  loading.style.display = useStream ? 'none' : 'block';
+  result.style.display = useStream ? 'block' : 'none';
+  answerEl.innerHTML = useStream ? '' : '';
+  sourcesEl.innerHTML = '';
+
+  if (!useStream) {
+    try {
+      var resp = await fetch('/ask', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({userid: userid, question: q, top_k: parseInt(topK.value)})
+      });
+      var data = await resp.json();
+      answerEl.innerHTML = marked.parse(data.answer || '(无回答)');
+      renderSources(data.sources);
+      result.style.display = 'block';
+    } catch(e) {
+      answerEl.textContent = '请求失败: ' + e.message;
+      result.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      loading.style.display = 'none';
+    }
+  } else {
+    try {
+      var resp = await fetch('/ask_stream', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({userid: userid, question: q, top_k: parseInt(topK.value)})
+      });
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      var fullText = '';
+
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, {stream: true});
+        var parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (var i = 0; i < parts.length; i++) {
+          var line = parts[i].trim();
+          if (!line || !line.startsWith('data: ')) continue;
+          try {
+            var msg = JSON.parse(line.substring(6));
+            if (msg.token) {
+              fullText += msg.token;
+              answerEl.innerHTML = marked.parse(fullText);
+            } else if (msg.done) {
+              renderSources(msg.sources);
+            } else if (msg.error) {
+              answerEl.innerHTML = marked.parse(fullText + '\n\n> ⚠️ ' + msg.error);
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(e) {
+      answerEl.innerHTML = marked.parse(fullText + '\n\n> ⚠️ 请求失败: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      loading.style.display = 'none';
+    }
+  }
+}
+
+function renderSources(sources) {
+  // 将返回的文档来源显示在回答下方。
+  var html = '<h3>参考来源</h3><ul>';
+  if (sources && sources.length) {
+    sources.forEach(function(s) {
+      html += '<li>' + s[0] + ' (第' + s[1] + '页)</li>';
+    });
+  } else {
+    html += '<li>无参考来源</li>';
+  }
+  html += '</ul>';
+  document.getElementById('sources').innerHTML = html;
+}
+</script>
+</body>
+</html>
