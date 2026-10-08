@@ -3,17 +3,14 @@
 # Please install OpenAI SDK first: `pip3 install openai`
 import os
 from openai import OpenAI
-import traceback
 
 
 def init_by_deepseek():
-    """初始化 DeepSeek API 客户端。"""
-    try:
-        client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
-    except Exception as e:
-        print(f"deepseek init失败:{e}")
-        return None
-    return client
+    """Create a client only when this process has a configured API key."""
+    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("DEEPSEEK_API_KEY 未配置；请在启动 api.py 的同一环境中设置")
+    return OpenAI(api_key=key, base_url="https://api.deepseek.com")
 
 
 def chat_by_deepseek(content, model_name='deepseek-v4-pro'):
@@ -33,10 +30,8 @@ def chat_by_deepseek(content, model_name='deepseek-v4-pro'):
             temperature=0.7)
 
         return completion.choices[0].message.content
-    except Exception as e:
-        print(f"error:{e}")
-        print(traceback.format_exc())
-        return f"调用失败: {e}"
+    except Exception:
+        raise
 
 
 def chat_by_deepseek_stream(content, model_name='deepseek-v4-pro'):
@@ -49,7 +44,7 @@ def chat_by_deepseek_stream(content, model_name='deepseek-v4-pro'):
         completion = client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "你是一个饥荒联机版知识专家，"},
+                {"role": "system", "content": ""},
                 {"role": "user", "content": content},
             ],
             stream=True,
@@ -62,10 +57,8 @@ def chat_by_deepseek_stream(content, model_name='deepseek-v4-pro'):
                     yield msg.content
             else:
                 yield ""
-    except Exception as e:
-        print(f"error:{e}")
-        print(traceback.format_exc())
-        yield f"调用失败: {e}"
+    except Exception:
+        raise
 
 
 if __name__ == "__main__":

@@ -9,9 +9,10 @@ import os
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from user_files import validate_userid
+
 
 MAX_LOGIN_BODY_BYTES = 8192
-MAX_USERID_LENGTH = 128
 MAX_TOKEN_LENGTH = 4096
 MAX_VERIFY_RESPONSE_BYTES = 8192
 
@@ -31,13 +32,12 @@ def _parse_login_body(body):
         raise ValueError("请求体必须是 JSON 对象")
     userid = data.get("userid")
     token = data.get("token")
-    if not isinstance(userid, str) or not userid.strip():
-        raise ValueError("userid 不能为空")
+    userid = validate_userid(userid)
     if not isinstance(token, str) or not token.strip():
         raise ValueError("token 不能为空")
-    if len(userid) > MAX_USERID_LENGTH or len(token) > MAX_TOKEN_LENGTH:
-        raise ValueError("userid 或 token 超过长度限制")
-    return userid.strip(), token
+    if len(token) > MAX_TOKEN_LENGTH:
+        raise ValueError("token 超过长度限制")
+    return userid, token
 
 
 def verify_token_with_java(token):
@@ -76,9 +76,10 @@ def verify_token_with_java(token):
     if not result["valid"]:
         return None
     verified_userid = result.get("userid")
-    if not isinstance(verified_userid, str) or not verified_userid.strip():
-        raise AuthUnavailable("认证服务未返回有效 userid")
-    return verified_userid
+    try:
+        return validate_userid(verified_userid)
+    except ValueError as exc:
+        raise AuthUnavailable("认证服务未返回有效 userid") from exc
 
 
 def authorize_bearer(authorization, userid):

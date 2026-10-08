@@ -1,0 +1,7 @@
+fastapi>=0.100,<1
+uvicorn>=0.20,<1
+httpx>=0.27,<1  # FastAPI TestClient
+python-multipart>=0.0.9,<1
+sentence-transformers
+pymilvus
+openai

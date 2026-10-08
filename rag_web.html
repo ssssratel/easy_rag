@@ -13,8 +13,10 @@
   .intro, .hint { color: #627084; } .hint { margin: 8px 0; font-size: 13px; }
   .panel { margin-top: 20px; padding: 22px; background: #fff; border: 1px solid #e0e5ec; border-radius: 12px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .user-badge { float: right; padding: 5px 12px; background: #e7f0fc; color: #225798; border-radius: 20px; font-weight: 600; }
+  select { width: 100%; padding: 10px 12px; border: 1px solid #bcc7d5; border-radius: 7px; font: inherit; background: #fff; }
   label { display: block; font-weight: 600; margin-bottom: 6px; }
-  input[type=text], input[type=password], textarea { width: 100%; padding: 10px 12px;
+  input[type=text], textarea { width: 100%; padding: 10px 12px;
     border: 1px solid #bcc7d5; border-radius: 7px; font: inherit; background: #fff; }
   input:focus, textarea:focus { outline: 2px solid #b9d6fd; border-color: #3978cb; }
   textarea { resize: vertical; min-height: 88px; }
@@ -25,6 +27,23 @@
   button:disabled { opacity: .5; cursor: wait; }
   .actions, .options { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
   .options label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; }
+  .multi-select { position: relative; max-width: 420px; margin: 8px 0 14px; }
+  .multi-select summary { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 12px; border: 1px solid #bcc7d5; border-radius: 7px; background: #fff;
+    cursor: pointer; list-style: none; }
+  .multi-select summary::-webkit-details-marker { display: none; }
+  .multi-select summary:focus-visible { outline: 2px solid #b9d6fd; }
+  .multi-select summary span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .multi-select summary::after { content: "▾"; flex: none; }
+  .multi-select[open] summary::after { content: "▴"; }
+  .checkbox-list { position: absolute; z-index: 2; top: calc(100% + 4px); left: 0; right: 0;
+    display: grid; gap: 2px; max-height: 220px; overflow-y: auto; padding: 6px;
+    border: 1px solid #bcc7d5; border-radius: 7px; background: #fff;
+    box-shadow: 0 8px 24px rgba(35, 48, 68, .12); }
+  .checkbox-list label { display: flex; align-items: center; gap: 9px; margin: 0;
+    padding: 8px 10px; border-radius: 5px; font-weight: 400; cursor: pointer; }
+  .checkbox-list label:hover { background: #f3f5f8; }
+  .checkbox-list input { margin: 0; }
   .separator { border-top: 1px solid #e0e5ec; margin: 20px 0; }
   .status { min-height: 24px; margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .status.error { color: #b52b36; } .status.success { color: #137547; }
@@ -41,46 +60,53 @@
 </head>
 <body>
 <main class="container">
+  <span class="user-badge" id="current_user">当前用户：1</span>
   <h1>RAG 知识问答</h1>
-  <p class="intro">使用示例用户和集合测试登录、上传、集合管理与问答。所有操作都会显示请求结果。</p>
-  <section class="panel" aria-labelledby="scope_title">
-    <h2 id="scope_title">用户与集合</h2>
-    <div class="grid">
-      <div><label for="userid">用户 ID</label>
-        <input type="text" id="userid" value="1" placeholder="例如：1" autocomplete="username" maxlength="128"></div>
-      <div><label for="collection_name">集合名称</label>
-        <input type="text" id="collection_name" value="demo_1" placeholder="例如：demo_1" maxlength="64">
-        <p class="hint">支持英文字母、数字和下划线，最多 64 个字符。</p></div>
-    </div>
-    <label for="token">身份 Token</label>
-    <input type="password" id="token" placeholder="填写身份服务为用户 1 签发的真实 Token" autocomplete="off" maxlength="4096">
-    <p class="hint">示例参数为 userid="1"。Token 需要由身份服务提供，不会保存在浏览器存储中。创建和删除集合需要有效 Token。</p>
-    <div class="actions"><button type="button" id="login_btn" onclick="verifyLogin()">校验登录</button></div>
-    <p id="login_status" class="status" role="status" aria-live="polite">尚未校验登录。</p>
-  </section>
-
+  <p class="intro">管理当前用户的集合、上传文档并进行知识问答。</p>
   <section class="panel" aria-labelledby="manage_title">
     <h2 id="manage_title">集合与文档</h2>
+    <div class="grid">
+      <div><label for="collection_name">操作集合</label>
+        <select id="collection_name"><option value="">正在加载…</option></select>
+        <p id="collection_list_status" class="hint" role="status" aria-live="polite"></p></div>
+      <div><label for="new_collection_name">新集合名称</label>
+        <input type="text" id="new_collection_name" placeholder="例如：demo_1" maxlength="64">
+        <p class="hint">仅支持英文字母、数字和下划线，最多 64 个字符。</p></div>
+    </div>
     <div class="actions">
       <button type="button" id="create_btn" onclick="manageCollection('POST')">创建 / 重新启用集合</button>
-      <button type="button" id="delete_btn" class="danger" onclick="manageCollection('DELETE')">删除集合向量</button>
+      <button type="button" id="delete_btn" class="danger" onclick="manageCollection('DELETE')">删除集合</button>
     </div>
-    <p class="hint">删除会停用当前用户的指定集合并保留原文件。重新创建后，可重新入库。</p>
+    <p class="hint">删除会移除当前用户指定集合的全部原文件及向量，并停用集合。重新创建后为空集合。</p>
     <p id="collection_status" class="status" role="status" aria-live="polite"></p>
     <div class="separator"></div>
-    <label for="upload_file">上传文档</label>
-    <input type="file" id="upload_file" accept=".txt,.md,.html,.htm">
+    <label for="upload_file">上传文档（可多选）</label>
+    <input type="file" id="upload_file" accept=".txt,.md,.html,.htm" multiple>
     <div class="actions">
       <button type="button" id="upload_btn" onclick="uploadDocument(false)">上传所选文件</button>
       <button type="button" id="demo_btn" class="secondary" onclick="uploadDocument(true)">上传示例 demo.md</button>
     </div>
-    <p class="hint">支持 TXT、Markdown、HTML，最大 20 MiB。同名文件会被覆盖。示例文件介绍 RAG 的流程。</p>
-    <p class="hint">上传成功后，在服务端运行 <code>python rag_builder.py</code> 完成入库，再进行问答。</p>
+    <p class="hint">支持 TXT、Markdown、HTML，最大 20 MiB。同一集合中的同名文件会被拒绝。示例文件介绍 RAG 的流程。</p>
+    <p class="hint">上传成功即表示文件已完成向量化，可以直接进行问答。</p>
     <p id="upload_status" class="status" role="status" aria-live="polite"></p>
+    <div class="separator"></div>
+    <label for="existing_file">当前集合中的文件</label>
+    <select id="existing_file"><option value="">请先选择集合</option></select>
+    <p id="file_list_status" class="hint" role="status" aria-live="polite"></p>
+    <div class="actions">
+      <button type="button" id="delete_file_btn" class="danger" onclick="deleteDocument()">删除所选文件</button>
+    </div>
+    <p id="file_status" class="status" role="status" aria-live="polite"></p>
   </section>
 
   <section class="panel" aria-labelledby="ask_title">
     <h2 id="ask_title">知识问答</h2>
+    <label id="ask_collections_label">选择问答集合（可多选）</label>
+    <details id="ask_collection_picker" class="multi-select" aria-labelledby="ask_collections_label">
+      <summary><span id="ask_collection_summary">请选择集合</span></summary>
+      <div id="ask_collections" class="checkbox-list" role="group" aria-labelledby="ask_collections_label"></div>
+    </details>
+    <p class="hint">至少勾选一个集合，检索数量是在全部所选集合中的总数。</p>
     <label for="question">问题</label>
     <textarea id="question" placeholder="输入你的问题">RAG 的基本流程是什么？</textarea>
     <div class="options">
@@ -102,8 +128,8 @@
   </section>
 
   <section class="panel">
-    <details><summary>最近一次接口请求（Token 已隐藏）</summary><pre id="request_preview">点击操作后显示接口路径和参数。</pre></details>
-    <p class="hint">请通过问答服务页面使用，例如 http://localhost:8080/。当前后端的问答与上传接口尚未校验身份 Token；登录、创建和删除集合需接入 Java 身份校验服务。</p>
+    <details><summary>最近一次接口请求</summary><pre id="request_preview">点击操作后显示接口路径和参数。</pre></details>
+    <p class="hint">测试登录后可管理用户 1 的集合。当前问答与上传接口尚未校验身份。</p>
   </section>
 </main>
 <script>
@@ -114,9 +140,15 @@ const DEMO_DOCUMENT = '# RAG 示例文档\n\nRAG 是检索增强生成。基本�
 let busy = false;
 let askController = null;
 byId('top_k').addEventListener('input', () => { byId('top_k_val').textContent = byId('top_k').value; });
-for (const id of ['userid', 'token']) {
-  byId(id).addEventListener('input', () => setStatus('login_status', '身份参数已更改，请重新校验。'));
-}
+const CURRENT_USER_ID = "1";
+byId('current_user').textContent = '当前用户：' + CURRENT_USER_ID;
+byId('collection_name').addEventListener('change', () => loadFiles());
+byId('ask_collections').addEventListener('change', updateAskCollectionSummary);
+document.addEventListener('click', event => {
+  const picker = byId('ask_collection_picker');
+  if (!picker.contains(event.target)) picker.open = false;
+});
+loadCollections();
 byId('question').addEventListener('keydown', event => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); ask(); }
 });
@@ -127,43 +159,115 @@ function setStatus(id, message, type = '') {
 }
 function setBusy(value) {
   busy = value;
-  for (const id of ['userid', 'collection_name', 'token', 'upload_file', 'question', 'top_k', 'stream',
-    'login_btn', 'create_btn', 'delete_btn', 'upload_btn', 'demo_btn', 'ask_btn']) {
+  for (const id of ['collection_name', 'new_collection_name', 'upload_file', 'existing_file',
+    'question', 'top_k', 'stream', 'create_btn', 'delete_btn', 'upload_btn',
+    'demo_btn', 'delete_file_btn', 'ask_btn']) {
     byId(id).disabled = value;
   }
+  for (const box of byId('ask_collections').querySelectorAll('input')) box.disabled = value;
+  const picker = byId('ask_collection_picker');
+  picker.inert = value;
+  if (value) picker.open = false;
   byId('cancel_btn').disabled = !askController;
 }
-function userId() {
-  const userid = byId('userid').value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/.test(userid)) throw new Error('用户 ID 格式无效。示例：1');
-  return userid;
-}
 function scope() {
-  const userid = userId();
-  const collection_name = byId('collection_name').value.trim();
-  if (!/^[A-Za-z0-9_]{1,64}$/.test(collection_name)) throw new Error('集合名称仅支持英文字母、数字和下划线，最多 64 个字符。');
-  return {userid, collection_name};
+  const collection_name = byId('collection_name').value;
+  if (!collection_name) throw new Error('请先选择已有集合。');
+  return {userid: CURRENT_USER_ID, collection_name};
 }
-function tokenValue(required = false) {
-  const token = byId('token').value.trim();
-  if (required && !token) throw new Error('请填写该用户的真实身份 Token。');
-  if (token.length > 4096) throw new Error('Token 超过长度限制。');
-  return token;
+function newCollection() {
+  const collection_name = byId('new_collection_name').value.trim();
+  if (!/^[A-Za-z0-9_]{1,64}$/.test(collection_name)) {
+    throw new Error('新集合名称仅支持英文字母、数字和下划线，最多 64 个字符。');
+  }
+  return {userid: CURRENT_USER_ID, collection_name};
 }
-function headers(json = false, required = false) {
-  const result = json ? {'Content-Type': 'application/json'} : {};
-  const token = tokenValue(required);
-  if (token) result.Authorization = 'Bearer ' + token;
-  return result;
+function updateAskCollectionSummary() {
+  const boxes = [...byId('ask_collections').querySelectorAll('input')];
+  const selected = boxes.filter(box => box.checked).map(box => box.value);
+  const summary = byId('ask_collection_summary');
+  summary.textContent = selected.length
+    ? '已选 ' + selected.length + ' 个：' + selected.join('、')
+    : boxes.length ? '请选择集合' : '暂无可选集合';
+  summary.title = selected.join('、');
+}
+async function loadCollections(preferred = '') {
+  const select = byId('collection_name');
+  const checks = byId('ask_collections');
+  const checked = new Set([...checks.querySelectorAll('input:checked')].map(box => box.value));
+  const previous = preferred || select.value;
+  byId('collection_list_status').textContent = '正在加载已有集合…';
+  try {
+    const path = '/api/v1/users/' + CURRENT_USER_ID + '/collections';
+    const data = await requestJSON(path, {method: 'GET'});
+    if (data.userid !== CURRENT_USER_ID || !Array.isArray(data.collections)) {
+      throw new Error('集合列表响应无效。');
+    }
+    select.replaceChildren();
+    checks.replaceChildren();
+    for (const name of data.collections) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = name;
+      box.checked = checked.has(name) || (preferred === name && checked.size === 0);
+      label.append(box, document.createTextNode(name));
+      checks.appendChild(label);
+    }
+    if (data.collections.includes(previous)) select.value = previous;
+    if (!data.collections.length) {
+      select.add(new Option('暂无集合', ''));
+      checks.textContent = '当前用户暂无可选集合。';
+      byId('collection_list_status').textContent = '当前用户暂无已启用的集合。';
+    } else {
+      byId('collection_list_status').textContent = '共 ' + data.collections.length + ' 个已启用集合。';
+    }
+    updateAskCollectionSummary();
+    await loadFiles();
+  } catch (error) {
+    select.replaceChildren(new Option('加载失败', ''));
+    checks.textContent = '集合加载失败。';
+    updateAskCollectionSummary();
+    byId('collection_list_status').textContent = error.message;
+    byId('existing_file').replaceChildren(new Option('请先选择集合', ''));
+  }
+}
+async function loadFiles(preferred = '') {
+  const select = byId('existing_file');
+  const collection_name = byId('collection_name').value;
+  if (!collection_name) {
+    select.replaceChildren(new Option('请先选择集合', ''));
+    byId('file_list_status').textContent = '';
+    return;
+  }
+  const previous = preferred || select.value;
+  byId('file_list_status').textContent = '正在加载文件…';
+  try {
+    const path = collectionPath({userid: CURRENT_USER_ID, collection_name}) + '/files';
+    const data = await requestJSON(path, {method: 'GET'});
+    if (data.userid !== CURRENT_USER_ID || data.collection_name !== collection_name ||
+        !Array.isArray(data.files)) throw new Error('文件列表响应无效。');
+    if (byId('collection_name').value !== collection_name) return;
+    select.replaceChildren();
+    for (const filename of data.files) select.add(new Option(filename, filename));
+    if (data.files.includes(previous)) select.value = previous;
+    if (!data.files.length) select.add(new Option('暂无文件', ''));
+    byId('file_list_status').textContent = '共 ' + data.files.length + ' 个文件。';
+  } catch (error) {
+    select.replaceChildren(new Option('加载失败', ''));
+    byId('file_list_status').textContent = error.message;
+  }
 }
 function collectionPath(target) {
   return '/api/v1/users/' + encodeURIComponent(target.userid) + '/collections/' + encodeURIComponent(target.collection_name);
 }
 function showRequest(path, options, bodyPreview) {
-  const safeHeaders = {...(options.headers || {})};
-  if (safeHeaders.Authorization) safeHeaders.Authorization = 'Bearer [已隐藏]';
   byId('request_preview').textContent = JSON.stringify({
-    method: options.method, path, headers: safeHeaders, body: bodyPreview
+    method: options.method, path, headers: options.headers || {}, body: bodyPreview
   }, null, 2);
 }
 async function readJSON(response) {
@@ -186,48 +290,69 @@ async function runAction(statusId, pending, action) {
   try { await action(); } catch (error) { setStatus(statusId, error.message, 'error'); }
   finally { setBusy(false); }
 }
-async function verifyLogin() {
-  return runAction('login_status', '正在校验身份…', async () => {
-    const userid = userId();
-    const token = tokenValue(true);
-    const result = await requestJSON('/api/v1/auth/login', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userid, token})
-    }, {userid, token: '[已隐藏]'});
-    if (result.authenticated !== true || result.userid !== userid) throw new Error('身份服务未返回匹配的用户身份。');
-    setStatus('login_status', '用户 ' + userid + ' 校验成功。后续集合操作会再次校验 Token。', 'success');
-  });
-}
 async function manageCollection(method) {
   return runAction('collection_status', '正在处理集合…', async () => {
-    const target = scope();
-    const options = {method, headers: headers(false, true)};
+    const target = method === 'POST' ? newCollection() : scope();
+    const options = {method, credentials: 'same-origin'};
     if (method === 'DELETE' && !window.confirm('删除用户 ' + target.userid + ' 的集合 ' +
-      target.collection_name + ' 中的所有向量？原文件将保留，集合将停用。')) {
+      target.collection_name + ' 中的所有原文件及向量？删除后无法从页面恢复，集合将停用。')) {
       setStatus('collection_status', '已取消删除。'); return;
     }
     const result = await requestJSON(collectionPath(target), options);
     if (method === 'DELETE') {
       if (result.deleted !== true) throw new Error('接口未确认删除成功。');
-      setStatus('collection_status', '集合向量已删除，集合已停用；原文件保留。', 'success');
+      setStatus('collection_status', '集合原文件及向量已删除，集合已停用。', 'success');
     } else {
       setStatus('collection_status', result.created ? '集合已创建或重新启用。' : '集合已存在且处于启用状态。', 'success');
+      byId('new_collection_name').value = '';
     }
+    await loadCollections(method === 'POST' ? target.collection_name : '');
   });
 }
 async function uploadDocument(example) {
-  return runAction('upload_status', '正在上传文档…', async () => {
+  return runAction('upload_status', '正在上传并向量化文档…', async () => {
     const target = scope();
-    const file = example ? new File([DEMO_DOCUMENT], 'demo.md', {type: 'text/markdown'}) : byId('upload_file').files[0];
-    if (!file) throw new Error('请先选择文件，或点击上传示例 demo.md。');
-    if (!/\.(txt|md|html|htm)$/i.test(file.name)) throw new Error('只支持 TXT、Markdown、HTML 文件。');
-    if (/[/\\\u0000<>:"|?*\u0001-\u001f]/.test(file.name) || file.name.startsWith('.') ||
-      /[. ]$/.test(file.name) || new TextEncoder().encode(file.name).length > 240) throw new Error('文件名无效。');
-    if (file.size > MAX_UPLOAD_BYTES) throw new Error('文件超过 20 MiB 限制。');
-    const path = collectionPath(target) + '/files/' + encodeURIComponent(file.name);
-    // 使用文件原始字节，浏览器负责 Content-Length；后端不接受 multipart/form-data。
-    const options = {method: 'PUT', headers: {...headers(), 'Content-Type': 'application/octet-stream'}, body: file};
-    const result = await requestJSON(path, options, {filename: file.name, size: file.size, format: '文件原始字节'});
-    setStatus('upload_status', '已上传 ' + result.path + '（' + result.size + ' 字节）。请在服务端完成入库后再提问。', 'success');
+    const files = example ? [new File([DEMO_DOCUMENT], 'demo.md', {type: 'text/markdown'})]
+      : Array.from(byId('upload_file').files);
+    if (!files.length) throw new Error('请先选择文件，或点击上传示例 demo.md。');
+    if (files.length > 20) throw new Error('一次最多上传 20 个文件。');
+    const names = new Set();
+    for (const file of files) {
+      if (!/\.(txt|md|html|htm)$/i.test(file.name)) throw new Error('只支持 TXT、Markdown、HTML 文件。');
+      if (/[\/\\\u0000<>:"|?*\u0001-\u001f]/.test(file.name) || file.name.startsWith('.') ||
+        /[. ]$/.test(file.name) || new TextEncoder().encode(file.name).length > 240) throw new Error('文件名无效。');
+      if (file.size > MAX_UPLOAD_BYTES) throw new Error('文件超过 20 MiB 限制。');
+      if (names.has(file.name)) throw new Error('不能选择同名文件。');
+      names.add(file.name);
+    }
+    const body = new FormData();
+    for (const file of files) body.append('files', file, file.name);
+    const result = await requestJSON(collectionPath(target) + '/files/batch',
+      {method: 'POST', body});
+    if (result.uploaded === false && result.code === 'FILE_EXISTS') {
+      setStatus('upload_status', result.message || '文件已存在，拒绝上传。');
+      return;
+    }
+    if (result.uploaded !== true || result.indexed !== true || !Array.isArray(result.files) ||
+        result.files.length !== files.length) throw new Error('接口未确认全部文件向量化成功。');
+    setStatus('upload_status', '已上传并向量化 ' + result.files.length +
+      ' 个文件（' + result.chunks + ' 个文本块）。', 'success');
+    await loadFiles(files[0].name);
+  });
+}
+async function deleteDocument() {
+  return runAction('file_status', '正在删除文件…', async () => {
+    const target = scope();
+    const filename = byId('existing_file').value;
+    if (!filename) throw new Error('请先选择要删除的文件。');
+    if (!window.confirm('删除集合 ' + target.collection_name + ' 中的文件 ' + filename + ' 及其向量？')) {
+      setStatus('file_status', '已取消删除。'); return;
+    }
+    const path = collectionPath(target) + '/files/' + encodeURIComponent(filename);
+    const result = await requestJSON(path, {method: 'DELETE', credentials: 'same-origin'});
+    if (result.deleted !== true) throw new Error('接口未确认删除成功。');
+    setStatus('file_status', '文件及其向量已删除。', 'success');
+    await loadFiles();
   });
 }
 function renderAnswer(text) {
@@ -294,15 +419,18 @@ async function ask() {
   renderAnswer('');
   renderSources([]);
   try {
-    const target = scope();
+    const collection_names = [...byId('ask_collections').querySelectorAll('input:checked')]
+      .map(box => box.value);
+    if (!collection_names.length) throw new Error('请至少勾选一个问答集合。');
     const question = byId('question').value.trim();
     const top_k = Number(byId('top_k').value);
     if (!question) throw new Error('请输入问题。');
     if (!Number.isInteger(top_k) || top_k < 1 || top_k > 10) throw new Error('检索数量须为 1 到 10。');
-    const payload = {...target, question, top_k};
+    const payload = {userid: CURRENT_USER_ID, collection_names, question, top_k};
     const stream = byId('stream').checked;
     const path = stream ? '/ask_stream' : '/ask';
-    const options = {method: 'POST', headers: headers(true), body: JSON.stringify(payload), signal: askController.signal};
+    const options = {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload), signal: askController.signal};
     showRequest(path, options, payload);
     const response = await fetch(path, options);
     if (stream) {

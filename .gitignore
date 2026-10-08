@@ -7,3 +7,4 @@ __pycache__/
 !.env.example
 milvus_docs/
 test_file/
+k_dir/

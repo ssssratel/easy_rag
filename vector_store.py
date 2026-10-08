@@ -10,6 +10,8 @@ import os
 import re
 from functools import lru_cache
 
+from user_files import validate_userid, validate_collection_name
+
 
 class MilvusVectorStore:
     def __init__(self, client=None):
@@ -41,6 +43,9 @@ class MilvusVectorStore:
 
     def add(self, records):
         """Insert records with vector, content, filename, page, userid, collection_name and doc_id."""
+        for record in records:
+            validate_userid(record["userid"])
+            validate_collection_name(record["collection_name"])
         if records:
             self.client.insert(collection_name=self.name, data=records)
 
@@ -52,6 +57,8 @@ class MilvusVectorStore:
 
     def delete_scope(self, userid, collection_name):
         """Delete only vectors belonging to one user's logical collection."""
+        userid = validate_userid(userid)
+        collection_name = validate_collection_name(collection_name)
         if not self.exists():
             return
         self.client.delete(
@@ -65,6 +72,8 @@ class MilvusVectorStore:
 
     def search(self, userid, collection_name, vector, limit):
         """Return matching records as backend-independent dictionaries."""
+        userid = validate_userid(userid)
+        collection_name = validate_collection_name(collection_name)
         if not self.exists():
             return []
         results = self.client.search(
@@ -77,6 +86,7 @@ class MilvusVectorStore:
             limit=limit,
             output_fields=["content", "filename", "page"],
             search_params={"metric_type": "IP", "params": {"nprobe": 10}},
+            consistency_level="Strong",
         )
         return [
             {

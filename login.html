@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · RAG 知识问答</title>
+<style>
+  * { box-sizing: border-box; }
+  body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px;
+    background: #f4f6f9; color: #233044; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif; }
+  main { width: min(100%, 440px); padding: 36px; background: #fff; border: 1px solid #e0e5ec; border-radius: 14px;
+    box-shadow: 0 12px 36px rgba(35, 48, 68, .08); }
+  h1 { margin: 0 0 8px; font-size: 27px; }
+  p { color: #627084; margin: 0 0 24px; }
+  .user { padding: 12px 14px; margin-bottom: 22px; border-radius: 8px; background: #f3f5f8; }
+  button { width: 100%; padding: 12px 16px; border: 0; border-radius: 8px; background: #2c68b6;
+    color: white; font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { background: #225798; }
+</style>
+</head>
+<body>
+<main>
+  <h1>RAG 知识问答</h1>
+  <p>点击登录，使用测试用户进入知识库。</p>
+  <div class="user">测试用户 ID：<strong>1</strong></div>
+  <button type="button" id="login_btn">登录</button>
+</main>
+<script>
+document.getElementById('login_btn').addEventListener('click', async () => {
+  const button = document.getElementById('login_btn');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/v1/auth/demo-login', {
+      method: 'POST', credentials: 'same-origin'
+    });
+    if (!response.ok) throw new Error('测试登录失败，请重试。');
+    window.location.href = 'rag_web.html';
+  } catch (error) {
+    button.disabled = false;
+    window.alert(error.message);
+  }
+});
+</script>
+</body>
+</html>
